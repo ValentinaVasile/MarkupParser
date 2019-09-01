@@ -14,6 +14,12 @@ class PlainTextItem extends TextItem {
 		this.text = text;
 	}
 }
+class NewLineItem extends TextItem {
+	constructor(text) {
+		super();
+		this.text = text;
+	}
+}
 class DocumentItem {
 	
 }
@@ -25,10 +31,11 @@ class TitleItem {
 }
 
 class SectionDocumentItem extends DocumentItem {
-	constructor(documentItems, titleItem) {
-		super();		
+	constructor(titleItem, level, documentItems) {
+		super();	
+		this.titleItem = titleItem;	
 		this.documentItems = documentItems;
-		this.titleItem = titleItem;
+		this.level = level;
 	}
 }
 
@@ -39,7 +46,7 @@ class ParagraphDocumentItem extends DocumentItem{
 	}
 }
 
-class Document {
+class MarkupDocument {
 	constructor(documentItems) {
 		this.documentItems = documentItems;
 	}
@@ -81,9 +88,12 @@ class Parser {
 			}
 		}
 		return tokens;
-			 
 	}
+	
 	parseTitle(tokens, cursor) {
+		if (cursor.index >= tokens.length) {
+			return undefined;
+		}
 		let countHash = 0;
 		for (let i = cursor.index; i < tokens.length; i++) {
 			if (tokens[i].type == HashToken) {
@@ -94,45 +104,123 @@ class Parser {
 		}
 		if (countHash > 0 && tokens[countHash + cursor.index].type == TextToken && tokens[countHash + cursor.index + 1].type == NewLineToken) {
 			cursor.index += countHash + 2;
-			return new TitleItem(countHash, tokens[cursor.index - 2].value);
-			
+			return new TitleItem(countHash, tokens[cursor.index - 2].value);			
 		} 
 	}
+	
 	parsePlainText(tokens, cursor) {
+		if (cursor.index >= tokens.length) {
+			return undefined;
+		}
 		let token = tokens[cursor.index];
 		if (token.type == TextToken) {
 			cursor.index++;
 			return new PlainTextItem(token.value);
 		}
 	}
+	
 	parseBoldText(tokens, cursor) {
+		if (cursor.index >= tokens.length) {
+			return undefined;
+		}
 		let token = tokens[cursor.index];
 		if (token.type == BoldToken && tokens[cursor.index + 1].type == TextToken && tokens[cursor.index + 2].type == BoldToken) {
 			cursor.index += 3;
 			return new BoldTextItem(tokens[cursor.index - 2].value);
 		}
+		if (cursor >= tokens.length) {
+			return undefined;
+		}
 	}
+
+	parseNewline(tokens, cursor) {
+		if (cursor.index >= tokens.length) {
+			return undefined;
+		}
+		let token = tokens[cursor.index];
+		if (token.type == NewLineToken) {
+			cursor.index++;
+			return new NewLineItem(token.value);
+		}
+		if (cursor >= tokens.length) {
+			return undefined;
+		}
+	}
+
 	parseTextItem(tokens, cursor) {
-		let plainTextItem = this.parseTextItem(tokens, cursor);
+		let plainTextItem = this.parsePlainText(tokens, cursor);
 		if (plainTextItem != undefined) {
 			return plainTextItem;
 		}
 		let boldTextItem = this.parseBoldText(tokens, cursor);
-		return boldTextItem;		
+		if (boldTextItem != undefined) {
+			return boldTextItem;
+		}
+		let newLineItem = this.parseNewline(tokens, cursor);
+		if (newLineItem != undefined) {
+			return newLineItem;
+		}
+
 	}
+	
 	parseParagraph(tokens, cursor) {
 		let textItems = [];
-		let textItem = parseTextItem(tokens, cursor);
+		let textItem = this.parseTextItem(tokens, cursor);
 		while (true) {
 			if (textItem != undefined) {
 				textItems.push(textItem);
-				textItem = parseTextItem(tokens, cursor);
+				textItem = this.parseTextItem(tokens, cursor);
 			} else {
 				break;
 			}
 		}
 		if (textItems.length > 0) {
 			return new ParagraphDocumentItem(textItems);
+		}
+	}
+	
+	parseSection(tokens, cursor) {
+		let titleItem = this.parseTitle(tokens, cursor);
+		if (titleItem != undefined) {
+			let level = titleItem.level;
+			let documentItems = [];
+			while (true) {
+				let documentItem = this.parseDocumentItem(tokens, cursor);
+				if (documentItem != undefined) {
+					documentItems.push(documentItem);
+				} else {
+					break;
+				}
+			}
+			if (documentItems.length > 0) {
+				return new SectionDocumentItem(titleItem, level, documentItems);
+			}
+		}
+	}
+	
+	parseDocumentItem(tokens, cursor) {
+		let paragraphItem = this.parseParagraph(tokens, cursor);
+		let newline = NewLineToken;
+		if (paragraphItem != undefined) {
+			return paragraphItem;
+		}
+		let sectionItem = this.parseSection(tokens, cursor);
+		return sectionItem;
+	}
+	
+	parseDocument(tokens, cursor) {
+		let documentItems = [];
+		let documentItem = this.parseDocumentItem(tokens, cursor);
+		while (true) {
+			if (documentItem != undefined) {
+				documentItems.push(documentItem);
+				documentItem = this.parseDocumentItem(tokens, cursor);
+			} else {
+				break;
+			}
+		}
+		if (documentItems.length > 0) {
+			return new MarkupDocument(documentItems);
 		}
 	}
 	
@@ -143,20 +231,8 @@ string  = "# Section 1\nSome **(bold) introduction** to Section 1.\n## Section 1
 test = new Parser;
 const tokens = test.tokenize(string)
 c = {index: 0};
-let item = test.parseTitle(tokens, c);
-console.log(item, c);
-item = test.parseTitle(tokens, c);
-console.log(item, c);
-
-item = test.parsePlainText(tokens, c);
-console.log(item, c);
-item = test.parsePlainText(tokens, c);
-console.log(item, c);
-
-item = test.parseBoldText(tokens, c);
-console.log(item, c);
-item = test.parseBoldText(tokens, c);
-console.log(item, c);
+let item = test.parseDocument(tokens, c);
+console.log(item);
 
 class HtmlExporter {
 	exportDocument(document) {
@@ -209,6 +285,7 @@ document:
 document_item:
 	paragraph
 	section
+	
 
 paragraph:
 	[text_item]
@@ -222,6 +299,10 @@ title:
 text_item:
 	plain_text
 	bold_text
+	new_line
+
+new_line:
+	NL
 
 plain_text:
 	TEXT
