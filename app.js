@@ -1,4 +1,12 @@
-class TextItem {
+class Item {
+	toPlainString(indent) {
+		throw new Error('You have to implement the method toPlainString!');
+	}
+	toHTML() {
+		throw new Error('You have to implement the method toHTML!');
+	}	
+}
+class TextItem extends Item {
 
 }
 class BoldTextItem extends TextItem {
@@ -6,27 +14,55 @@ class BoldTextItem extends TextItem {
 		super();
 		this.text = text;
 	}
-	
+	toPlainString(indent) {
+		return '**' + this.text + '**';
+	}
+	toHTML() {
+		return '<strong>' + this.text + '</strong>';
+	}	
 }
 class PlainTextItem extends TextItem {
 	constructor(text) {
 		super();
 		this.text = text;
 	}
+	toPlainString(indent) {
+		return this.text;
+	}
+	toHTML() {
+		return this.text;
+	}	
+
 }
 class NewLineItem extends TextItem {
-	constructor(text) {
+	constructor() {
 		super();
-		this.text = text;
 	}
+	toPlainString(indent) {
+		return '\n' + '\t'.repeat(indent);
+	}
+	toHTML() {
+		return '<br>';
+	}	
 }
-class DocumentItem {
+class DocumentItem extends Item {
 	
 }
-class TitleItem {
+class TitleItem extends Item {
 	constructor(level, text) {
+		super();
 		this.level =  level;
 		this.text = text;
+	}
+	toPlainString(indent) {
+		let hashes = '\n' + '\t'.repeat(indent);
+		for (let i = 0; i < this.level; i++) {
+			hashes += '#';
+		}
+		return hashes + this.text + '\n' + '\t'.repeat(indent + 1);
+	}
+	toHTML() {
+		return '<h1>' + this.text + '</h1>';
 	}
 }
 
@@ -37,6 +73,20 @@ class SectionDocumentItem extends DocumentItem {
 		this.documentItems = documentItems;
 		this.level = level;
 	}
+	toPlainString(indent) {
+		let result = this.titleItem.toPlainString(indent);
+		this.documentItems.forEach(element => {
+			result += element.toPlainString(indent + 1);
+		});
+		return result;		
+	}
+	toHTML() {
+		let result = this.titleItem.toHTML();
+		this.documentItems.forEach(element => {
+			result += element.toHTML();
+		});
+		return '<section>' + result + '</section>';		
+	}	
 }
 
 class ParagraphDocumentItem extends DocumentItem{
@@ -44,13 +94,43 @@ class ParagraphDocumentItem extends DocumentItem{
 		super();
 		this.textItems = textItems;
 	}
+	toPlainString(indent) {
+		let result = '';
+		this.textItems.forEach(element => {
+			result += element.toPlainString(indent);
+		});
+		return result;		
+	}
+	toHTML() {
+		let result = '';
+		this.textItems.forEach(element => {
+			result += element.toHTML();
+		});
+		return '<p>' + result + '</p>';		
+	}	
 }
 
-class MarkupDocument {
+class MarkupDocument extends Item {
 	constructor(documentItems) {
+		super();
 		this.documentItems = documentItems;
 	}
+	toPlainString(indent) {
+		let result = '\t'.repeat(indent);
+		this.documentItems.forEach(element => {
+			result += element.toPlainString(indent);
+		});
+		return result;		
+	}	
+	toHTML() {
+		let result = '';
+		this.documentItems.forEach(element => {
+			result += element.toHTML();
+		});
+		return result;		
+	}	
 }
+
 const HashToken = 0;
 const NewLineToken = 1;
 const BoldToken = 2;
@@ -140,7 +220,7 @@ class Parser {
 		let token = tokens[cursor.index];
 		if (token.type == NewLineToken) {
 			cursor.index++;
-			return new NewLineItem(token.value);
+			return new NewLineItem();
 		}
 		if (cursor >= tokens.length) {
 			return undefined;
@@ -165,11 +245,10 @@ class Parser {
 	
 	parseParagraph(tokens, cursor) {
 		let textItems = [];
-		let textItem = this.parseTextItem(tokens, cursor);
 		while (true) {
+			let textItem = this.parseTextItem(tokens, cursor);
 			if (textItem != undefined) {
 				textItems.push(textItem);
-				textItem = this.parseTextItem(tokens, cursor);
 			} else {
 				break;
 			}
@@ -179,13 +258,22 @@ class Parser {
 		}
 	}
 	
-	parseSection(tokens, cursor) {
+	parseSection(tokens, cursor, minAcceptedLevel) {
+		let oldCursorIndex = cursor.index;
+
 		let titleItem = this.parseTitle(tokens, cursor);
 		if (titleItem != undefined) {
 			let level = titleItem.level;
+
+			//apply filter so that we only accept sections with the right level (just subsections, never super-sections)
+			if (level <= minAcceptedLevel) {
+				cursor.index = oldCursorIndex; //must revert the cursor so the title can be parsed again by whoemever will want this section
+				return;
+			}
+
 			let documentItems = [];
 			while (true) {
-				let documentItem = this.parseDocumentItem(tokens, cursor);
+				let documentItem = this.parseDocumentItem(tokens, cursor, level);
 				if (documentItem != undefined) {
 					documentItems.push(documentItem);
 				} else {
@@ -198,23 +286,23 @@ class Parser {
 		}
 	}
 	
-	parseDocumentItem(tokens, cursor) {
+	parseDocumentItem(tokens, cursor, level) {	
 		let paragraphItem = this.parseParagraph(tokens, cursor);
-		let newline = NewLineToken;
 		if (paragraphItem != undefined) {
 			return paragraphItem;
 		}
-		let sectionItem = this.parseSection(tokens, cursor);
-		return sectionItem;
+		let sectionItem = this.parseSection(tokens, cursor, level);
+		if (sectionItem != undefined) {
+			return sectionItem;
+		}		
 	}
 	
 	parseDocument(tokens, cursor) {
 		let documentItems = [];
-		let documentItem = this.parseDocumentItem(tokens, cursor);
 		while (true) {
+			let documentItem = this.parseDocumentItem(tokens, cursor);
 			if (documentItem != undefined) {
 				documentItems.push(documentItem);
-				documentItem = this.parseDocumentItem(tokens, cursor);
 			} else {
 				break;
 			}
@@ -232,7 +320,8 @@ test = new Parser;
 const tokens = test.tokenize(string)
 c = {index: 0};
 let item = test.parseDocument(tokens, c);
-console.log(item);
+let str = item.toHTML();
+console.log(str);
 
 class HtmlExporter {
 	exportDocument(document) {
